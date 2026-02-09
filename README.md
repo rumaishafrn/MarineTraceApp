@@ -154,4 +154,4 @@ Dapatkan statistik akumulasi untuk lokasi tertentu
 
 ## Lisensi
 
-Untuk penelitian akademik - Universitas Hasanuddin
+Untuk penelitian akademik PAIR
