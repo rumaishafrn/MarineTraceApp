@@ -1,182 +1,115 @@
-# Backend - MarineTrace API
+# MarineTrace Backend (Flask API)
 
-## Setup Instructions
+This is the backend service for the MarineTrace application, powered by **Flask**. It provides two main capabilities:
+1.  **Marine Debris Backtracking**: Simulates the movement of marine litter backwards in time using **OpenDrift** (with ERA5 and HYCOM data) to identify potential sources.
+2.  **Waste Detection**: Uses **YOLOv8** to detect and classify plastic waste in uploaded images.
 
-### 1. Install Dependencies
+## Prerequisites
 
-```bash
-pip install -r requirements.txt --break-system-packages
-```
+-   **Python 3.10+** (Recommended via Conda)
+-   **Conda** (Anaconda or Miniconda)
+-   **Copernicus Climate Data Store (CDS) Account** (for ERA5 data access)
 
-Atau install satu per satu:
-```bash
-pip install flask flask-cors ultralytics opencv-python pillow numpy pandas --break-system-packages
-```
+## Installation
 
-### 2. Add Your YOLO Model
+### 1. Set up Conda Environment
 
-**PENTING:** Copy model YOLO `.pt` Anda ke folder `models/`
-
-```bash
-cp /path/to/your/model.pt models/best.pt
-```
-
-Atau jika model Anda punya nama lain, update di `app.py` line 20:
-```python
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'nama-model-anda.pt')
-```
-
-### 3. Add Tracking Map Images
-
-Copy gambar tracking Anda ke folder `static/`:
-- `static/takalar_tracking.png` - Tracking map untuk Takalar
-- `static/mamuju_tracking.png` - Tracking map untuk Mamuju
-
-### 4. Run Server
+It is **highly recommended** to use a dedicated Conda environment to manage complex geospatial dependencies (GDAL, NetCDF4, OpenDrift).
 
 ```bash
+# Create environment
+conda create -n webdev-pair python=3.11
+conda activate webdev-pair
+
+# Install system dependencies (if on Linux/WSL)
+# sudo apt-get install libnetcdf-dev libgdal-dev
+```
+
+### 2. Install Python Dependencies
+
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+### 3. Configure ERA5 Access
+
+To download atmospheric data for simulations, you need a `.cdsapirc` file in your home directory (`C:\Users\Username\.cdsapirc` or `~/.cdsapirc`).
+
+1.  Register at [CDS](https://cds.climate.copernicus.eu/).
+2.  Create the file with your URL and Key:
+    ```
+    url: https://cds.climate.copernicus.eu/api/v2
+    key: YOUR_UID:YOUR_API_KEY
+    ```
+
+### 4. Setup YOLO Model
+
+Place your trained YOLOv8 model file (`.pt`) in the `models/` directory.
+
+```bash
+# Example
+cp /path/to/your/best.pt backend/models/best.pt
+```
+
+## Running the Server
+
+Ensure your Conda environment is activated:
+
+```bash
+conda activate webdev-pair
+cd backend
 python app.py
 ```
 
-Server akan berjalan di `http://localhost:5000`
+The server will start at `http://localhost:5000`.
 
 ## API Endpoints
 
-### Health Check
-```bash
-GET /api/health
-```
+### Simulation (Backtracking)
 
-Response:
-```json
-{
-  "status": "ok",
-  "yolo_available": true,
-  "model_path": "/path/to/model.pt",
-  "model_exists": true
-}
-```
+The simulation runs as an asynchronous background job.
 
-### Track Waste
-```bash
-POST /api/track
-Content-Type: application/json
+1.  **Start Simulation**
+    *   `POST /api/simulate`
+    *   Body:
+        ```json
+        {
+          "latitude": -5.15,
+          "longitude": 119.42,
+          "start_time": "2024-01-01",
+          "days": 3,
+          "particles": 30
+        }
+        ```
+    *   Response: `{"job_id": "uuid-string", "status": "queued"}`
 
-{
-  "location": "Takalar",
-  "latitude": -5.3971,
-  "longitude": 119.4419,
-  "start_date": "2024-02-01",
-  "days": 7
-}
-```
+2.  **Check Status**
+    *   `GET /api/simulation/status/<job_id>`
+    *   Response: `{"status": "running"}` or `{"status": "completed", "result": {...}}`
 
-### Detect Waste
-```bash
-POST /api/detect
-Content-Type: application/json
+3.  **Get Results**
+    *   `GET /api/simulation/result/<job_id>`
+    *   Returns JSON with paths to generated files (Animation, NetCDF, Stats, OSM Plot).
 
-{
-  "location": "Takalar",
-  "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEA..."
-}
-```
+### Waste Detection
 
-### Get Statistics
-```bash
-GET /api/stats/Takalar
-GET /api/stats/Mamuju
-```
+1.  **Detect Waste**
+    *   `POST /api/detect`
+    *   Body: JSON with Base64 image or Multipart Form Data.
+    *   Response: JSON with detection counts and result image path.
 
-## Database Schema
+### Utilities
 
-### Table: detections
-- id (INTEGER PRIMARY KEY)
-- location (TEXT)
-- image_path (TEXT)
-- result_path (TEXT)
-- plastic_bag (INTEGER)
-- bottle (INTEGER)
-- wrapper (INTEGER)
-- total_items (INTEGER)
-- confidence (REAL)
-- created_at (TIMESTAMP)
+*   `GET /api/health`: Check if API and models are ready.
+*   `GET /serve_simulation_file/<filename>`: Serves generated static files (images, GIFs).
 
-### Table: accumulations
-- id (INTEGER PRIMARY KEY)
-- location (TEXT UNIQUE)
-- total_items (INTEGER)
-- plastic_bag (INTEGER)
-- bottle (INTEGER)
-- wrapper (INTEGER)
-- total_uploads (INTEGER)
-- last_updated (TIMESTAMP)
+## Project Structure
 
-## Folder Structure
-
-```
-backend/
-├── app.py              # Main Flask application
-├── requirements.txt    # Python dependencies
-├── models/            # YOLO model files (.pt)
-│   └── best.pt        # Your YOLO model
-├── static/            # Static files
-│   ├── takalar_tracking.png
-│   └── mamuju_tracking.png
-├── uploads/           # Uploaded images (auto-created)
-├── results/           # Detection results (auto-created)
-└── database.db        # SQLite database (auto-created)
-```
-
-## Customizing YOLO Class Names
-
-Jika model YOLO Anda memiliki class names yang berbeda, update mapping di `app.py` sekitar line 180-186:
-
-```python
-# Map class names to categories
-plastic_bag = sum(detection_counts.get(name, 0) for name in ['plastic_bag', 'bag', 'plastik'])
-bottle = sum(detection_counts.get(name, 0) for name in ['bottle', 'botol'])
-wrapper = sum(detection_counts.get(name, 0) for name in ['wrapper', 'kemasan', 'packaging'])
-```
-
-Sesuaikan dengan class names dari model Anda. Untuk cek class names:
-```python
-print(yolo_model.names)
-```
-
-## Troubleshooting
-
-### Model tidak load
-- Pastikan file `.pt` ada di folder `models/`
-- Cek nama file sesuai dengan `MODEL_PATH` di `app.py`
-- Pastikan ultralytics terinstall: `pip install ultralytics`
-
-### Error saat deteksi
-- Cek format image (harus JPEG/PNG)
-- Pastikan image tidak terlalu besar (max 10MB recommended)
-
-### Database error
-- Delete `database.db` dan restart server untuk reset database
-
-## Testing
-
-Test API dengan curl:
-
-```bash
-# Health check
-curl http://localhost:5000/api/health
-
-# Track waste
-curl -X POST http://localhost:5000/api/track \
-  -H "Content-Type: application/json" \
-  -d '{
-    "location": "Takalar",
-    "latitude": -5.3971,
-    "longitude": 119.4419,
-    "start_date": "2024-02-01",
-    "days": 7
-  }'
-
-# Get stats
-curl http://localhost:5000/api/stats/Takalar
-```
+*   `app.py`: Main Flask application entry point.
+*   `simulation/`: Core simulation logic (OpenDrift integration).
+    *   `litter_simulation.py`: Main simulation script.
+    *   `modules/`: Physics, data preparation, and visualization modules.
+*   `static/simulations/`: Stores generated simulation outputs (GIFs, PNGs, NC files).
+*   `models/`: Directory for YOLO `.pt` files.
+*   `uploads/`: Temporary storage for uploaded images.

@@ -11,38 +11,25 @@ ENV/
 
 # Backend
 backend/uploads/*
+!backend/uploads/.gitkeep
 backend/results/*
+!backend/results/.gitkeep
 backend/database.db
 backend/*.log
 
-# Keep folders but ignore contents
-!backend/uploads/.gitkeep
-!backend/results/.gitkeep
+# Simulation
+backend/simulation/data_repository/*.nc
+backend/simulation/data_repository/*.grib
+backend/simulation/data_repository/*.grib2
+backend/simulation/temp_runtime/
+backend/simulation/simulation_output/
+backend/static/simulations/*.nc
+backend/static/simulations/*.gif
+backend/static/simulations/*.png
+!backend/static/simulations/.gitkeep
 
-# Node
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Frontend build
+# Frontend
+frontend/node_modules/
 frontend/dist/
-frontend/build/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment
-.env
-.env.local
-
-# Models (optional - remove if you want to commit your model)
-backend/models/*.pt
+frontend/.env
+frontend/.DS_Store

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import os
 import base64
@@ -9,6 +9,29 @@ import json
 import numpy as np
 from PIL import Image
 import cv2
+import sys
+import threading
+import uuid
+import logging
+from atexit import register
+
+# Import Simulation Module
+try:
+    from simulation.litter_simulation import run_backtracking_simulation
+    from simulation import config as sim_config
+    SIMULATION_AVAILABLE = True
+    print(f"Simulation module loaded from backend.simulation")
+except ImportError as e:
+    print(f"WARNING: Simulation module not available: {e}")
+    SIMULATION_AVAILABLE = False
+
+# Import Scheduler
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    SCHEDULER_AVAILABLE = True
+except ImportError:
+    SCHEDULER_AVAILABLE = False
+    print("WARNING: APScheduler not installed. Install with: pip install apscheduler")
 
 # Import YOLO
 try:
@@ -23,7 +46,7 @@ CORS(app)
 
 # Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'best.pt')  # GANTI DENGAN NAMA MODEL ANDA
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'best.pt')
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 RESULTS_FOLDER = os.path.join(BASE_DIR, 'results')
 DATABASE_PATH = os.path.join(BASE_DIR, 'database.db')
@@ -105,59 +128,161 @@ def health_check():
         'model_exists': os.path.exists(MODEL_PATH)
     })
 
+# Simulation Job Store (In-memory for now)
+SIMULATION_JOBS = {}
 
-@app.route('/api/track', methods=['POST'])
-def track_waste():
+def cleanup_old_simulations(max_age_hours=24):
+    """Deletes simulation files older than max_age_hours."""
+    try:
+        static_sim_dir = os.path.join(BASE_DIR, 'static', 'simulations')
+        if not os.path.exists(static_sim_dir):
+            return
+            
+        now = datetime.now()
+        count = 0
+        for filename in os.listdir(static_sim_dir):
+            file_path = os.path.join(static_sim_dir, filename)
+            # Check if file is older than max_age
+            file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+            if now - file_time > timedelta(hours=max_age_hours):
+                try:
+                    os.remove(file_path)
+                    count += 1
+                except Exception as e:
+                    print(f"Error deleting old file {filename}: {e}")
+        
+        # Also clean up old jobs from memory
+        expired_jobs = []
+        for jid, job in SIMULATION_JOBS.items():
+            job_time = datetime.fromisoformat(job['created_at'])
+            if now - job_time > timedelta(hours=max_age_hours):
+                expired_jobs.append(jid)
+        
+        for jid in expired_jobs:
+            del SIMULATION_JOBS[jid]
+            
+        if count > 0:
+            print(f"Cleaned up {count} old simulation files and {len(expired_jobs)} job records.")
+            
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+
+@app.route('/api/simulate/<job_id>', methods=['GET'])
+def get_simulation_status(job_id):
+    """Check status of a simulation job."""
+    job = SIMULATION_JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    
+    return jsonify(job)
+
+@app.route('/api/simulate', methods=['POST'])
+def start_simulation():
     """
-    Tracking sampah berdasarkan lokasi, koordinat, tanggal, dan durasi
+    Start a background simulation job.
     """
+    if not SIMULATION_AVAILABLE:
+        return jsonify({"error": "Simulation module not loaded"}), 503
+
     try:
         data = request.json
-        location = data.get('location')
-        latitude = data.get('latitude')
-        longitude = data.get('longitude')
-        start_date = data.get('start_date')
-        days = data.get('days')
-        
-        # Validate input
-        if not all([location, latitude, longitude, start_date, days]):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        # Calculate tracking data
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = start_dt + timedelta(days=int(days))
-        
-        # Simulate tracking data (replace with real calculation)
-        distance = np.random.uniform(5, 20)  # km
-        avg_speed = np.random.uniform(0.2, 0.5)  # m/s
-        direction = np.random.choice(['Tenggara', 'Timur Laut', 'Barat Daya', 'Utara'])
-        
-        response = {
-            'success': True,
-            'data': {
-                'location': location,
-                'coordinates': {
-                    'latitude': float(latitude),
-                    'longitude': float(longitude)
-                },
-                'start_date': start_date,
-                'end_date': end_dt.strftime('%Y-%m-%d'),
-                'days': int(days),
-                'tracking_map': f'/api/tracking-map/{location.lower()}',
-                'statistics': {
-                    'total_distance': round(distance, 2),
-                    'avg_speed': round(avg_speed, 3),
-                    'dominant_direction': direction,
-                    'status': 'Selesai'
-                }
-            }
-        }
-        
-        return jsonify(response)
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        if not data:
+            return jsonify({"error": "No input data provided"}), 400
 
+        # Parse and Validate inputs
+        try:
+            lat = float(data.get('lat', -5.15))
+            lon = float(data.get('lon', 119.42))
+            days = int(data.get('days', 3))
+            particles = int(data.get('particles', 100))
+            start_date = data.get('start_time', datetime.now().strftime("%Y-%m-%d"))
+        except ValueError as e:
+            return jsonify({"error": f"Invalid input format: {str(e)}"}), 400
+
+        # Range Validation
+        if not (-90 <= lat <= 90):
+            return jsonify({"error": "Latitude must be between -90 and 90"}), 400
+        if not (-180 <= lon <= 180):
+            return jsonify({"error": "Longitude must be between -180 and 180"}), 400
+        if days < 1 or days > 30:
+            return jsonify({"error": "Days must be between 1 and 30"}), 400
+        if particles < 1 or particles > 5000:
+            return jsonify({"error": "Particles must be between 1 and 5000"}), 400
+
+        # Start cleanup thread if scheduler is not available (fallback)
+        if not SCHEDULER_AVAILABLE:
+            threading.Thread(target=cleanup_old_simulations).start()
+        
+        job_id = str(uuid.uuid4())
+        
+        if len(start_date) == 10:  # YYYY-MM-DD
+            start_time_str = f"{start_date} 12:00:00"
+        else:
+            start_time_str = start_date
+
+        # Setup output directory
+        static_sim_dir = os.path.join(BASE_DIR, 'static', 'simulations')
+        os.makedirs(static_sim_dir, exist_ok=True)
+        
+        # Initialize job status
+        SIMULATION_JOBS[job_id] = {
+            "id": job_id,
+            "status": "pending",
+            "progress": 0,
+            "created_at": datetime.now().isoformat(),
+            "params": data
+        }
+
+        def run_job(jid, output_dir):
+            try:
+                SIMULATION_JOBS[jid]["status"] = "running"
+                
+                # Generate unique filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"sim_{timestamp}_{jid[:8]}.nc"
+                
+                # Run Simulation (passing output_dir explicitly for thread safety)
+                results = run_backtracking_simulation(
+                    lat=lat, lon=lon, start_time=start_time_str, days=days, particles=particles,
+                    out_filename=filename, plot=True, verbose=False, output_dir=output_dir
+                )
+                
+                # Update job with results
+                file_urls = {}
+                stats = {}
+                for key, value in results.items():
+                    if key == "stats":
+                        stats = value
+                    elif isinstance(value, str) and os.path.exists(value):
+                        fname = os.path.basename(value)
+                        # Construct URL path (relative to static folder)
+                        file_urls[key] = f"/static/simulations/{fname}"
+                
+                SIMULATION_JOBS[jid]["status"] = "completed"
+                SIMULATION_JOBS[jid]["files"] = file_urls
+                SIMULATION_JOBS[jid]["stats"] = stats
+                SIMULATION_JOBS[jid]["completed_at"] = datetime.now().isoformat()
+                
+            except Exception as e:
+                print(f"Job {jid} failed: {e}")
+                import traceback
+                traceback.print_exc()
+                SIMULATION_JOBS[jid]["status"] = "failed"
+                SIMULATION_JOBS[jid]["error"] = str(e)
+
+        # Start thread
+        thread = threading.Thread(target=run_job, args=(job_id, static_sim_dir))
+        thread.start()
+        
+        return jsonify({
+            "status": "submitted", 
+            "job_id": job_id,
+            "message": "Simulation started in background"
+        })
+
+    except Exception as e:
+        print(f"Simulation submission failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/detect', methods=['POST'])
 def detect_waste():
@@ -336,65 +461,10 @@ def detect_waste():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/stats/<location>', methods=['GET'])
-def get_stats(location):
-    """
-    Get accumulation statistics for a location
-    """
-    try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM accumulations WHERE location = ?', (location,))
-        row = cursor.fetchone()
-        
-        if not row:
-            return jsonify({'error': 'Location not found'}), 404
-        
-        cursor.execute('''
-            SELECT COUNT(*), AVG(confidence) 
-            FROM detections 
-            WHERE location = ?
-        ''', (location,))
-        det_stats = cursor.fetchone()
-        
-        conn.close()
-        
-        return jsonify({
-            'location': row[1],
-            'total_items': row[2],
-            'plastic_bag': row[3],
-            'bottle': row[4],
-            'wrapper': row[5],
-            'total_uploads': row[6],
-            'last_updated': row[7],
-            'avg_confidence': round(det_stats[1] * 100, 1) if det_stats[1] else 0
-        })
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/tracking-map/<location>', methods=['GET'])
-def get_tracking_map(location):
-    """
-    Serve tracking map image for location
-    """
-    try:
-        # Look for tracking map image
-        map_path = os.path.join(BASE_DIR, 'static', f'{location}_tracking.png')
-        
-        if os.path.exists(map_path):
-            return send_file(map_path, mimetype='image/png')
-        else:
-            # Return placeholder or error
-            return jsonify({
-                'error': 'Map not found',
-                'message': f'Please add {location}_tracking.png to backend/static/ folder'
-            }), 404
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route('/static/simulations/<path:filename>')
+def serve_simulation_file(filename):
+    """Serve simulation result files explicitly"""
+    return send_from_directory(os.path.join(app.static_folder, 'simulations'), filename)
 
 
 if __name__ == '__main__':
@@ -403,6 +473,20 @@ if __name__ == '__main__':
     print("="*60)
     print(f"YOLO Model: {'✓ Loaded' if yolo_model else '✗ Not loaded'}")
     print(f"Database: ✓ Initialized")
+    
+    # Initialize Scheduler
+    if SCHEDULER_AVAILABLE:
+        # Prevent scheduler from running twice in debug mode
+        if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+            scheduler = BackgroundScheduler()
+            scheduler.add_job(cleanup_old_simulations, 'interval', hours=1)
+            scheduler.start()
+            print("Scheduler: ✓ Started (Cleanup every 1 hour)")
+            # Shut down the scheduler when exiting the app
+            register(lambda: scheduler.shutdown())
+    else:
+        print("Scheduler: ✗ Not available (using fallback)")
+
     print(f"Server: http://localhost:5000")
     print("="*60 + "\n")
     

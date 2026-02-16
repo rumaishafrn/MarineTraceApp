@@ -8,11 +8,13 @@ function TrackingPage({ onBack }) {
     latitude: '',
     longitude: '',
     start_date: new Date().toISOString().split('T')[0],
-    days: ''
+    days: '',
+    particles: 100
   })
 
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [statusMessage, setStatusMessage] = useState('')
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
 
@@ -30,54 +32,89 @@ function TrackingPage({ onBack }) {
       ...prev,
       location,
       // Set default coordinates based on location
-      latitude: location === 'Takalar' ? '-5.3971' : location === 'Mamuju' ? '-2.6797' : '',
-      longitude: location === 'Takalar' ? '119.4419' : location === 'Mamuju' ? '118.8897' : ''
+      latitude: location === 'Takalar' ? '-5.59581' : location === 'Mamuju' ? '-2.65112' : '',
+      longitude: location === 'Takalar' ? '119.4815' : location === 'Mamuju' ? '118.92987' : ''
     }))
   }
 
   const startTracking = async () => {
     // Validation
-    if (!formData.location || !formData.latitude || !formData.longitude || !formData.days) {
+    if (!formData.latitude || !formData.longitude || !formData.days) {
       alert('Mohon lengkapi semua field!')
+      return
+    }
+
+    const lat = parseFloat(formData.latitude)
+    const lon = parseFloat(formData.longitude)
+    const days = parseInt(formData.days)
+    const particles = parseInt(formData.particles)
+
+    if (lat < -90 || lat > 90) {
+      alert('Latitude harus antara -90 dan 90')
+      return
+    }
+    if (lon < -180 || lon > 180) {
+      alert('Longitude harus antara -180 dan 180')
+      return
+    }
+    if (days < 1 || days > 30) {
+      alert('Durasi harus antara 1 dan 30 hari')
+      return
+    }
+    if (particles < 1 || particles > 5000) {
+      alert('Jumlah partikel harus antara 1 dan 5000')
       return
     }
 
     setLoading(true)
     setProgress(0)
     setError(null)
-
-    // Simulate progress
-    const progressInterval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 90) {
-          clearInterval(progressInterval)
-          return prev
-        }
-        return prev + 10
-      })
-    }, 200)
+    setStatusMessage('Mengirim permintaan simulasi...')
+    setResults(null)
 
     try {
-      const response = await axios.post('/api/track', {
-        location: formData.location,
-        latitude: parseFloat(formData.latitude),
-        longitude: parseFloat(formData.longitude),
-        start_date: formData.start_date,
-        days: parseInt(formData.days)
-      })
+      // 1. Start Simulation
+      const payload = {
+        lat: parseFloat(formData.latitude),
+        lon: parseFloat(formData.longitude),
+        start_time: formData.start_date,
+        days: parseInt(formData.days),
+        particles: parseInt(formData.particles)
+      }
 
-      clearInterval(progressInterval)
-      setProgress(100)
-
-      setTimeout(() => {
-        setResults(response.data.data)
-        setLoading(false)
-      }, 500)
+      const response = await axios.post('http://localhost:5000/api/simulate', payload)
+      const jobId = response.data.job_id
+      
+      setStatusMessage('Simulasi sedang berjalan di server...')
+      
+      // 2. Poll for Status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`http://localhost:5000/api/simulate/${jobId}`)
+          const job = statusRes.data
+          
+          if (job.status === 'completed') {
+            clearInterval(pollInterval)
+            setResults(job)
+            setLoading(false)
+            setStatusMessage('Selesai!')
+          } else if (job.status === 'failed') {
+            clearInterval(pollInterval)
+            setLoading(false)
+            setError(job.error || 'Simulasi gagal.')
+          } else {
+            // Still running
+            setStatusMessage('Sedang memproses... (estimasi 1-2 menit)')
+          }
+        } catch (err) {
+          console.error("Polling error", err)
+        }
+      }, 2000) // Poll every 2 seconds
 
     } catch (err) {
-      clearInterval(progressInterval)
       setLoading(false)
-      setError(err.response?.data?.error || 'Terjadi kesalahan saat tracking')
+      const errorMsg = err.response?.data?.error || err.message || 'Terjadi kesalahan saat tracking'
+      setError(errorMsg)
       console.error('Tracking error:', err)
     }
   }
@@ -176,6 +213,18 @@ function TrackingPage({ onBack }) {
                     placeholder="Contoh: 7"
                   />
                 </div>
+                <div className="form-group">
+                  <label>Jumlah Partikel</label>
+                  <input
+                    type="number"
+                    name="particles"
+                    min="10"
+                    max="1000"
+                    value={formData.particles}
+                    onChange={handleInputChange}
+                    placeholder="Contoh: 100"
+                  />
+                </div>
               </div>
 
               {error && (
@@ -190,73 +239,80 @@ function TrackingPage({ onBack }) {
             </div>
           ) : (
             <div className="tracking-results">
-              <h2>📊 Hasil Tracking</h2>
+              <h2>📊 Hasil Simulasi Tracking</h2>
 
               <div className="info-grid">
                 <div className="info-card">
-                  <h3>Lokasi</h3>
-                  <p>{results.location}</p>
+                  <h3>Koordinat Awal</h3>
+                  <p>{results.params?.lat || formData.latitude}, {results.params?.lon || formData.longitude}</p>
                 </div>
                 <div className="info-card">
-                  <h3>Koordinat</h3>
-                  <p>{results.coordinates.latitude.toFixed(4)}, {results.coordinates.longitude.toFixed(4)}</p>
-                </div>
-                <div className="info-card">
-                  <h3>Tanggal Mulai</h3>
-                  <p>{formatDate(results.start_date)}</p>
+                  <h3>Waktu Mulai</h3>
+                  <p>{results.params?.start_time || formData.start_date}</p>
                 </div>
                 <div className="info-card">
                   <h3>Durasi</h3>
-                  <p>{results.days} Hari</p>
+                  <p>{results.params?.days || formData.days} Hari</p>
+                </div>
+                <div className="info-card">
+                  <h3>Partikel</h3>
+                  <p>{results.params?.particles || 100}</p>
                 </div>
               </div>
 
               <div className="map-container">
-                <h3>Peta Tracking Sampah</h3>
-                <div className="image-container">
-                  <img
-                    src={`/tracking/${results.location.toLowerCase()}_tracking.png`}
-                    alt="Tracking Map"
-                    onError={(e) => {
-                      e.target.src = 'https://via.placeholder.com/800x600/667eea/ffffff?text=Tracking+Map+' + results.location
-                      e.target.alt = 'Placeholder - Tambahkan gambar tracking Anda'
-                    }}
-                  />
+                <h3>Hasil Simulasi (Backtracking)</h3>
+                
+                {/* 1. Animation */}
+                {(results.files?.animation) ? (
+                  <div className="plots-grid">
+                    <div className="image-container">
+                      <img 
+                        src={`http://localhost:5000${results.files.animation}`} 
+                        alt="Drift Animation" 
+                        style={{maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd'}}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p>Animasi tidak tersedia. (Cek log server untuk detail error)</p>
+                )}
+
+                {/* 2. Statistics */}
+                <div className="info-grid" style={{marginTop: '20px', marginBottom: '20px'}}>
+                  <div className="info-card">
+                    <h3>Jarak Rata-rata</h3>
+                    <p>{results.stats?.mean_distance_km ? `${results.stats.mean_distance_km.toFixed(2)} km` : '-'}</p>
+                  </div>
+                  <div className="info-card">
+                    <h3>Kecepatan Rata-rata</h3>
+                    <p>{results.stats?.mean_speed_ms ? `${results.stats.mean_speed_ms.toFixed(4)} m/s` : '-'}</p>
+                  </div>
+                  <div className="info-card">
+                    <h3>Arah Dominan</h3>
+                    <p>{results.stats?.dominant_direction || '-'}</p>
+                  </div>
                 </div>
-                <p className="map-note">
-                  💡 Tambahkan file <code>{results.location.toLowerCase()}_tracking.png</code> ke folder <code>frontend/public/tracking/</code>
-                </p>
+
+                {/* 3. OSM Plot */}
+                {results.files?.osm_plot && (
+                  <div className="plots-grid">
+                    <div className="image-container">
+                      <img 
+                        src={`http://localhost:5000${results.files.osm_plot}`} 
+                        alt="OSM Plot" 
+                        style={{maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd'}}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="stats-container">
-                <h3>📈 Statistik Tracking</h3>
-                <div className="stats-grid">
-                  <div className="stats-item">
-                    <span className="stats-label">Total Jarak Tempuh</span>
-                    <span className="stats-value">{results.statistics.total_distance} km</span>
-                  </div>
-                  <div className="stats-item">
-                    <span className="stats-label">Kecepatan Rata-rata</span>
-                    <span className="stats-value">{results.statistics.avg_speed} m/s</span>
-                  </div>
-                  <div className="stats-item">
-                    <span className="stats-label">Arah Dominan</span>
-                    <span className="stats-value">{results.statistics.dominant_direction}</span>
-                  </div>
-                  <div className="stats-item">
-                    <span className="stats-label">Tanggal Berakhir</span>
-                    <span className="stats-value">{formatDate(results.end_date)}</span>
-                  </div>
-                  <div className="stats-item">
-                    <span className="stats-label">Status Tracking</span>
-                    <span className="stats-value">{results.statistics.status}</span>
-                  </div>
-                </div>
-              </div>
+              
 
               <div className="button-group">
                 <button className="btn btn-secondary" onClick={resetTracking}>
-                  🔄 Tracking Baru
+                  🔄 Simulasi Baru
                 </button>
                 <button className="btn btn-secondary" onClick={onBack}>
                   🏠 Kembali ke Beranda
@@ -273,11 +329,7 @@ function TrackingPage({ onBack }) {
           <div className="loading-content">
             <div className="spinner"></div>
             <h2>Memproses Tracking...</h2>
-            <p>Menganalisis data oceanografi dan pola arus</p>
-            <div className="progress-container">
-              <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-            </div>
-            <p>{progress}%</p>
+            <p>{statusMessage || 'Menganalisis data oceanografi dan pola arus...'}</p>
           </div>
         </div>
       )}
