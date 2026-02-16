@@ -261,26 +261,25 @@ function TrackingPage({ onBack }) {
               </div>
 
               <div className="map-container">
-                <h3>Peta Backtracking Sampah</h3>
+                <h3>Hasil Simulasi (Backtracking)</h3>
                 
-                {/* Check for any available plot */}
-                {(results.files?.osm_plot) ? (
+                {/* 1. Animation */}
+                {(results.files?.animation) ? (
                   <div className="plots-grid">
-                    {results.files?.osm_plot && (
-                      <div className="image-container">
-                        <img 
-                          src={`http://localhost:5000${results.files.osm_plot}`} 
-                          alt="OSM Plot" 
-                          style={{maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd'}}
-                        />
-                      </div>
-                    )}
+                    <div className="image-container">
+                      <img 
+                        src={`http://localhost:5000${results.files.animation}`} 
+                        alt="Drift Animation" 
+                        style={{maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd'}}
+                      />
+                    </div>
                   </div>
                 ) : (
-                  <p>Plot tidak tersedia. (Cek log server untuk detail error)</p>
+                  <p>Animasi tidak tersedia. (Cek log server untuk detail error)</p>
                 )}
 
-                <div className="info-grid" style={{marginTop: '20px'}}>
+                {/* 2. Statistics */}
+                <div className="info-grid" style={{marginTop: '20px', marginBottom: '20px'}}>
                   <div className="info-card">
                     <h3>Jarak Rata-rata</h3>
                     <p>{results.stats?.mean_distance_km ? `${results.stats.mean_distance_km.toFixed(2)} km` : '-'}</p>
@@ -294,14 +293,17 @@ function TrackingPage({ onBack }) {
                     <p>{results.stats?.dominant_direction || '-'}</p>
                   </div>
                 </div>
-                
-                {results.files?.animation && (
-                  <div className="image-container" style={{marginTop: '20px'}}>
-                    <h4>Animasi Pergerakan</h4>
-                    <video controls style={{maxWidth: '100%', borderRadius: '8px'}}>
-                        <source src={`http://localhost:5000${results.files.animation}`} type="video/mp4" />
-                        Your browser does not support the video tag.
-                    </video>
+
+                {/* 3. OSM Plot */}
+                {results.files?.osm_plot && (
+                  <div className="plots-grid">
+                    <div className="image-container">
+                      <img 
+                        src={`http://localhost:5000${results.files.osm_plot}`} 
+                        alt="OSM Plot" 
+                        style={{maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd'}}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
