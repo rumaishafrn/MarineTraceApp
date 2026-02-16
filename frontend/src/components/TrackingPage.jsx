@@ -330,12 +330,6 @@ function TrackingPage({ onBack }) {
             <div className="spinner"></div>
             <h2>Memproses Tracking...</h2>
             <p>{statusMessage || 'Menganalisis data oceanografi dan pola arus...'}</p>
-            {/* 
-            <div className="progress-container">
-              <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-            </div>
-            <p>{progress}%</p>
-            */}
           </div>
         </div>
       )}

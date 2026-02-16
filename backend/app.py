@@ -17,15 +17,10 @@ from atexit import register
 
 # Import Simulation Module
 try:
-    # Go up one level from backend, then into pair-particle-drift
-    SIMULATION_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'pair-particle-drift'))
-    if SIMULATION_DIR not in sys.path:
-        sys.path.append(SIMULATION_DIR)
-        
-    from litter_simulation import run_backtracking_simulation
-    import config as sim_config
+    from simulation.litter_simulation import run_backtracking_simulation
+    from simulation import config as sim_config
     SIMULATION_AVAILABLE = True
-    print(f"Simulation module loaded from {SIMULATION_DIR}")
+    print(f"Simulation module loaded from backend.simulation")
 except ImportError as e:
     print(f"WARNING: Simulation module not available: {e}")
     SIMULATION_AVAILABLE = False
@@ -289,59 +284,6 @@ def start_simulation():
         print(f"Simulation submission failed: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/track', methods=['POST'])
-def track_waste():
-    """
-    Tracking sampah berdasarkan lokasi, koordinat, tanggal, dan durasi
-    """
-    try:
-        data = request.json
-        location = data.get('location')
-        latitude = data.get('latitude')
-        longitude = data.get('longitude')
-        start_date = data.get('start_date')
-        days = data.get('days')
-        
-        # Validate input
-        if not all([location, latitude, longitude, start_date, days]):
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        # Calculate tracking data
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = start_dt + timedelta(days=int(days))
-        
-        # Simulate tracking data (replace with real calculation)
-        distance = np.random.uniform(5, 20)  # km
-        avg_speed = np.random.uniform(0.2, 0.5)  # m/s
-        direction = np.random.choice(['Tenggara', 'Timur Laut', 'Barat Daya', 'Utara'])
-        
-        response = {
-            'success': True,
-            'data': {
-                'location': location,
-                'coordinates': {
-                    'latitude': float(latitude),
-                    'longitude': float(longitude)
-                },
-                'start_date': start_date,
-                'end_date': end_dt.strftime('%Y-%m-%d'),
-                'days': int(days),
-                'tracking_map': f'/api/tracking-map/{location.lower()}',
-                'statistics': {
-                    'total_distance': round(distance, 2),
-                    'avg_speed': round(avg_speed, 3),
-                    'dominant_direction': direction,
-                    'status': 'Selesai'
-                }
-            }
-        }
-        
-        return jsonify(response)
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/detect', methods=['POST'])
 def detect_waste():
     """
@@ -519,70 +461,10 @@ def detect_waste():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/stats/<location>', methods=['GET'])
-def get_stats(location):
-    """
-    Get accumulation statistics for a location
-    """
-    try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM accumulations WHERE location = ?', (location,))
-        row = cursor.fetchone()
-        
-        if not row:
-            return jsonify({'error': 'Location not found'}), 404
-        
-        cursor.execute('''
-            SELECT COUNT(*), AVG(confidence) 
-            FROM detections 
-            WHERE location = ?
-        ''', (location,))
-        det_stats = cursor.fetchone()
-        
-        conn.close()
-        
-        return jsonify({
-            'location': row[1],
-            'total_items': row[2],
-            'plastic_bag': row[3],
-            'bottle': row[4],
-            'wrapper': row[5],
-            'total_uploads': row[6],
-            'last_updated': row[7],
-            'avg_confidence': round(det_stats[1] * 100, 1) if det_stats[1] else 0
-        })
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/static/simulations/<path:filename>')
 def serve_simulation_file(filename):
     """Serve simulation result files explicitly"""
     return send_from_directory(os.path.join(app.static_folder, 'simulations'), filename)
-
-@app.route('/api/tracking-map/<location>', methods=['GET'])
-def get_tracking_map(location):
-    """
-    Serve tracking map image for location
-    """
-    try:
-        # Look for tracking map image
-        map_path = os.path.join(BASE_DIR, 'static', f'{location}_tracking.png')
-        
-        if os.path.exists(map_path):
-            return send_file(map_path, mimetype='image/png')
-        else:
-            # Return placeholder or error
-            return jsonify({
-                'error': 'Map not found',
-                'message': f'Please add {location}_tracking.png to backend/static/ folder'
-            }), 404
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

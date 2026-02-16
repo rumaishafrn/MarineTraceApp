@@ -23,11 +23,13 @@ def test_segmentation_model(image_path=None):
     print()
     
     # Load model
-    model_path = 'models/best.pt'
+    script_dir = Path(__file__).resolve().parent
+    backend_dir = script_dir.parent
+    model_path = backend_dir / 'models' / 'best.pt'
     
     try:
         print(f"Loading model from: {model_path}")
-        model = YOLO(model_path)
+        model = YOLO(str(model_path))
         print("✅ Model loaded successfully!")
         print()
         
