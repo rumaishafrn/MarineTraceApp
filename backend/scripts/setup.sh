@@ -5,14 +5,21 @@ echo "   MarineTrace - Setup & Installation Script"
 echo "=================================================="
 echo ""
 
-# Check if we're in the right directory
-if [ ! -f "README.md" ]; then
-    echo "❌ Error: Please run this script from marine-trace-app directory"
+# Find project root (3 levels up from scripts/)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
+APP_ROOT="$PROJECT_ROOT/MarineTraceApp"
+
+echo "📂 Project Root: $APP_ROOT"
+
+# Check if we're in the right directory structure
+if [ ! -d "$APP_ROOT/backend" ]; then
+    echo "❌ Error: Could not find backend directory at $APP_ROOT/backend"
     exit 1
 fi
 
 echo "📦 Step 1: Installing Backend Dependencies..."
-cd backend
+cd "$APP_ROOT/backend"
 pip install flask flask-cors ultralytics opencv-python pillow numpy pandas --break-system-packages
 if [ $? -ne 0 ]; then
     echo "❌ Failed to install backend dependencies"
@@ -22,7 +29,7 @@ cd ..
 
 echo ""
 echo "📦 Step 2: Installing Frontend Dependencies..."
-cd frontend
+cd "$APP_ROOT/frontend"
 npm install
 if [ $? -ne 0 ]; then
     echo "❌ Failed to install frontend dependencies"
